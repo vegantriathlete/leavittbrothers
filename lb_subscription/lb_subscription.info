@@ -1,0 +1,6 @@
+name = Leavitt Brothers Subscriptions
+description = Functionality to handle subscriptions
+package = Leavitt Brothers
+core = 7.x
+
+dependencies[] = rules

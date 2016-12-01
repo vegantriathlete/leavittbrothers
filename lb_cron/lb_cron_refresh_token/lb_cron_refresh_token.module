@@ -1,0 +1,31 @@
+<?php
+
+/**
+ * @file
+ * Leavitt Brothers Renew Subscriptions
+ *
+ */
+
+/**
+ * Implements hook_cron().
+ */
+function lb_cron_refresh_token_cron() {
+  $refresh = time() - 363 * 24 * 60 * 60;
+  $query = 'SELECT tr.entity_id
+            FROM {field_data_field_token_refreshed} tr
+            LEFT JOIN {field_data_field_last_pnref} lt
+              ON tr.entity_id = lt.entity_id
+            WHERE tr.entity_type = :user
+              AND lt.entity_type = :user
+              AND field_token_refreshed_value < :refresh
+              AND field_last_pnref_value > :blank';
+  $query_arguments = array(
+    ':user' => 'user',
+    ':refresh' => $refresh,
+    ':blank' => '',
+  );
+  $results = db_query($query, $query_arguments);
+  foreach ($results as $result) {
+    lb_subscription_refresh_token($result->entity_id);
+  }
+}

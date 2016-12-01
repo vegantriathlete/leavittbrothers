@@ -1,0 +1,4 @@
+name = Leavitt Brothers Reports
+description = Weekly, Daily and Sector Breakdown Reports Tabs
+package = Leavitt Brothers
+core = 7.x

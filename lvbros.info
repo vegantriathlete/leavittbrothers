@@ -1,0 +1,4 @@
+name = Leavitt Brothers
+description = Global utilities and tweaks
+package = Leavitt Brothers
+core = 7.x

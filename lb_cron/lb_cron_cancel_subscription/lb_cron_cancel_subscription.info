@@ -1,0 +1,7 @@
+name = Leavitt Brothers Cancel Subscriptions
+description = Functionality to handle canceling subscriptions
+package = Leavitt Brothers
+core = 7.x
+
+dependencies[] = rules
+dependencies[] = lb_subscription

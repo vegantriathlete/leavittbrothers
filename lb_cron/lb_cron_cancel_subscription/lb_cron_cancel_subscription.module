@@ -1,0 +1,29 @@
+<?php
+
+/**
+ * @file
+ * Leavitt Brothers Cancel Subscriptions
+ *
+ */
+
+/**
+ * Implements hook_cron().
+ */
+function lb_cron_cancel_subscription_cron() {
+  $query = 'SELECT entity_id, field_subscription_field_subscription_reference_target_id
+            FROM {field_data_field_subscription}
+            WHERE entity_type = :user
+              AND field_subscription_field_renew_value = :cancel
+              AND field_subscription_field_renewal_date_value = :today';
+  $query_arguments = array(
+    ':user' => 'user',
+    ':cancel' => 0,
+    ':today' => date('Ymd'),
+  );
+  $results = db_query($query, $query_arguments);
+  foreach ($results as $result) {
+    $account = user_load($result->entity_id);
+    $subscription = node_load($result->field_subscription_field_subscription_reference_target_id);
+    rules_invoke_event('lb_subscription_cancel', $account, $subscription);
+  }
+}

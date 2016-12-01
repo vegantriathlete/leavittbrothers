@@ -1,0 +1,576 @@
+<?php
+
+/**
+ * @file
+ * Leavitt Brothers Reports
+ *
+ * Callbacks to generate the different tabs
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function lb_reports_menu() {
+  $items = array();
+  $items['daily-reports'] = array(
+    'title' => 'Daily Reports',
+    'description' => 'Daily Reports for Current Year',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('lb_reports_daily_reports'),
+    'access callback' => TRUE,
+  );
+  $items['daily-reports/%'] = array(
+    'title' => 'Daily Reports by Year',
+    'description' => 'Daily Reports for Specified Year',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('lb_reports_daily_reports', 1),
+    'access callback' => TRUE,
+  );
+  $items['weekly-reports'] = array(
+    'title' => 'Weekly Reports',
+    'description' => 'Weekly Reports for Current Year',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('lb_reports_weekly_reports'),
+    'access callback' => TRUE,
+  );
+  $items['weekly-reports/%'] = array(
+    'title' => 'Weekly Reports by Year',
+    'description' => 'Weekly Reports for Specified Year',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('lb_reports_weekly_reports', 1),
+    'access callback' => TRUE,
+  );
+  $items['sector-breakdown'] = array(
+    'title' => 'Sector Breakdown',
+    'description' => 'Sector Breakdown for Current Year',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('lb_reports_sector_breakdown'),
+    'access callback' => TRUE,
+  );
+  $items['sector-breakdown/%'] = array(
+    'title' => 'Sector Breakdown by Year',
+    'description' => 'Sector Breakdown for Specified Year',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('lb_reports_sector_breakdown', 1),
+    'access callback' => TRUE,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function lb_reports_permission() {
+  // Note: I realize that the Content Access modules is setting permissions
+  //       to view the different product offerings. Unfortunately, it records
+  //       the node access permissions on a node-by-node basis through the use
+  //       of hook_node_access_records. It would have been somewhat clunky to
+  //       determine access to the content type itself by looking at
+  //       Content Access permissions. I think it makes more sense to define our
+  //       own permissions even though there ends up being something of an overlap.
+  return array(
+    'view lb daily' => array(
+      'title' => t('View LB Daily'),
+    ),
+    'view lb weekly' => array(
+      'title' => t('View LB Weekly'),
+    ),
+    'view lb breakdown' => array(
+      'title' => t('View LB Sector Breakdown & Trading Ideas'),
+    ),
+  );
+}
+
+/**
+ * Form Builder for Daily Reports
+ */
+function lb_reports_daily_reports($form, &$form_state, $year=NULL) {
+  $form = array();
+  if (!user_access('view lb daily')) {
+    $form['access_denied'] = array(
+      '#type' => 'item',
+      '#markup' => t('Sorry, you have not subscribed to this report, so you don\'t have access to it. Please click the Subscribe button above to gain access. Thank you.'),
+    );
+    return $form;
+  }
+  if (!$year) {
+    $year = date('Y');
+  }
+  $options = lb_reports_build_options_list('daily-reports', 'daily');
+  $form['select_year'] = array(
+    '#type' => 'select',
+    '#title' => t('Choose a report year'),
+    '#options' => $options,
+    '#default_value' => 'daily-reports/' . $year,
+  );
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Select'),
+  );
+  $items = array();
+  $results = lb_reports_get_content_type_by_year('daily', $year, 'DESC', 'ASC');
+  foreach ($results as $result) {
+    $items[] = theme('daily_reports', array('year' => $year, 'result' => $result));
+  }
+  if (count($items)) {
+    $form['items'] = array(
+      '#type' => 'item',
+      '#theme' => 'daily_report_table',
+      '#items' => $items,
+    );
+  }
+  else {
+    $form['empty'] = array(
+      '#type' => 'item',
+      '#title' => t('No results found.'),
+      '#markup' => t('Please make another selection.'),
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * Submit handler for Form Builder for Daily Reports
+ */
+function lb_reports_daily_reports_submit($form, $form_state) {
+  drupal_goto($form_state['values']['select_year']);
+}
+
+/**
+ * Form Builder for Weekly Reports
+ */
+function lb_reports_weekly_reports($form, &$form_state, $year=NULL) {
+  $form = array();
+  if (!user_access('view lb weekly')) {
+    $form['access_denied'] = array(
+      '#type' => 'item',
+      '#markup' => t('Sorry, you have not subscribed to this report, so you don\'t have access to it. Please click the Subscribe button above to gain access. Thank you.'),
+    );
+    return $form;
+  }
+  if (!$year) {
+    $year = date('Y');
+  }
+  $options = lb_reports_build_options_list('weekly-reports', 'weekly');
+  $form['select_year'] = array(
+    '#type' => 'select',
+    '#title' => t('Choose a report year'),
+    '#options' => $options,
+    '#default_value' => 'weekly-reports/' . $year,
+  );
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Select'),
+  );
+  $items = array();
+  $results = lb_reports_get_content_type_by_year('weekly', $year, 'DESC', 'DESC');
+  foreach ($results as $result) {
+    $items[] = theme('weekly_reports', array('year' => $year, 'result' => $result));
+  }
+  if (count($items)) {
+    $form['items'] = array(
+      '#type' => 'item',
+      '#theme' => 'weekly_report_list',
+      '#items' => $items,
+    );
+  }
+  else {
+    $form['empty'] = array(
+      '#type' => 'item',
+      '#title' => t('No results found.'),
+      '#markup' => t('Please make another selection.'),
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * Submit handler for Form Builder for Daily Reports
+ */
+function lb_reports_weekly_reports_submit($form, $form_state) {
+  drupal_goto($form_state['values']['select_year']);
+}
+
+/**
+ * Form Builder for Sector Breakdown
+ */
+function lb_reports_sector_breakdown($form, &$form_state, $year=NULL) {
+  $form = array();
+  if (!user_access('view lb breakdown')) {
+    $form['access_denied'] = array(
+      '#type' => 'item',
+      '#markup' => t('Sorry, you have not subscribed to this report, so you don\'t have access to it. Please click the Subscribe button above to gain access. Thank you.'),
+    );
+    return $form;
+  }
+  if (!$year) {
+    $year = date('Y');
+  }
+  $options = lb_reports_build_options_list('sector-breakdown', 'sector_breakdown_trading_ideas');
+  $form['select_year'] = array(
+    '#type' => 'select',
+    '#title' => t('Choose a report year'),
+    '#options' => $options,
+    '#default_value' => 'sector-breakdown/' . $year,
+  );
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Select'),
+  );
+  $items = array();
+  $results = lb_reports_get_content_type_by_year('sector_breakdown_trading_ideas', $year, 'DESC', 'DESC');
+  foreach ($results as $result) {
+    $items[] = theme('weekly_reports', array('year' => $year, 'result' => $result));
+  }
+  if (count($items)) {
+    $form['items'] = array(
+      '#type' => 'item',
+      '#theme' => 'weekly_report_list',
+      '#items' => $items,
+    );
+  }
+  else {
+    $form['empty'] = array(
+      '#type' => 'item',
+      '#title' => t('No results found.'),
+      '#markup' => t('Please make another selection.'),
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * Submit handler for Form Builder for Daily Reports
+ */
+function lb_reports_sector_breakdown_submit($form, $form_state) {
+  drupal_goto($form_state['values']['select_year']);
+}
+
+/**
+ * Get Content Type Created in Year
+ *
+ * @param string $content_type
+ *   The machine name of the content type to retrieve
+ * @param string $year
+ *   The creation year of the piece of content
+ * @param string $month
+ *   The order to sort the month, or NULL if not sorting
+ * @param string $day
+ *   The order to sort the day, or NULL if not sorting
+ * @return object $results
+ *   The query results
+ */
+function lb_reports_get_content_type_by_year($content_type, $year, $month = NULL, $day = NULL) {
+  $query = db_select('node', 'n');
+  $query->leftJoin('field_data_field_report_year', 'ry', 'ry.entity_id = n.nid');
+  $query->leftJoin('field_data_body', 'body', 'body.entity_id = n.nid');
+  $query->condition('type', $content_type)
+    ->condition('status', '1')
+    ->condition('field_report_year_value', $year, '=')
+    ->fields('n', array('nid'))
+    ->fields('body', array('body_value'))
+    ->addTag('node_access');
+  if ($month && $day) {
+    $query->leftJoin('field_data_field_report_month', 'rm', 'rm.entity_id = n.nid');
+    $query->fields('rm', array('field_report_month_value'));
+    $query->leftJoin('field_data_field_report_day', 'rd', 'rd.entity_id = n.nid');
+    $query->fields('rd', array('field_report_day_value'));
+    $query->orderBy('field_report_month_value', $month)
+      ->orderBy('field_report_day_value', $day);
+  }
+  elseif ($month) {
+    $query->leftJoin('field_data_field_report_month', 'rm', 'rm.entity_id = n.nid');
+    $query->fields('rm', array('field_report_month_value'));
+    $query->orderBy('field_report_month_value', $month);
+  }
+  $results = $query->execute();
+  return $results;
+}
+
+/**
+ * Build select list options
+ *
+ * @param string $path
+ *   The path to go to
+ * @param string $content_type
+ *   The machine name of the content type
+ * @return array $option
+ *   The options for the select list
+ */
+function lb_reports_build_options_list($path, $content_type) {
+  $options = array();
+  $results = lb_reports_get_content_type_years($content_type);
+  foreach ($results as $result) {
+    $options[$path . '/' . $result->field_report_year_value] = $result->field_report_year_value;
+  }
+  return $options;
+}
+
+/**
+ * Get Content Type Years
+ *
+ * @param string $content_type
+ *   The machine name of the content type to retrieve
+ * @return object $results
+ *   The query results
+ */
+function lb_reports_get_content_type_years($content_type) {
+  $query = db_select('node', 'n');
+  $query->leftJoin('field_data_field_report_year', 'ry', 'ry.entity_id = n.nid');
+  $query->condition('type', $content_type)
+    ->condition('status', '1')
+    ->fields('ry', array('field_report_year_value'))
+    ->orderBy('field_report_year_value', 'DESC')
+    ->addTag('node_access');
+  $query->distinct();
+  $results = $query->execute();
+  return $results;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function lb_reports_theme($existing, $type, $theme, $path) {
+  return array(
+    'daily_reports' => array(
+      'variables' => array(
+        'year' => '',
+        'result' => NULL, 
+      ),
+    ),
+    'daily_report_table' => array(
+      'variables' => array(
+        'items' => array(), 
+      ),
+    ),
+    'weekly_reports' => array(
+      'variables' => array(
+        'year' => '',
+        'result' => NULL, 
+      ),
+    ),
+    'weekly_report_list' => array(
+      'variables' => array(
+        'items' => array(), 
+      ),
+    ),
+  );
+}
+
+/**
+ * Theme function for daily reports
+ */
+function theme_daily_reports($variables) {
+  $months = array(
+    '1' => array('full' => 'January', 'short' => 'Jan'),
+    '2' => array('full' => 'February', 'short' => 'Feb'),
+    '3' => array('full' => 'March', 'short' => 'Mar'),
+    '4' => array('full' => 'April', 'short' => 'Apr'),
+    '5' => array('full' => 'May', 'short' => 'May'),
+    '6' => array('full' => 'June', 'short' => 'Jun'),
+    '7' => array('full' => 'July', 'short' => 'Jul'),
+    '8' => array('full' => 'August', 'short' => 'Aug'),
+    '9' => array('full' => 'September', 'short' => 'Sep'),
+    '10' => array('full' => 'October', 'short' => 'Oct'),
+    '11' => array('full' => 'November', 'short' => 'Nov'),
+    '12' => array('full' => 'December', 'short' => 'Dec'),
+  );
+  $day_of_week = array(
+    'Mon' => 1,
+    'Tue' => 2,
+    'Wed' => 3,
+    'Thu' => 4,
+    'Fri' => 5,
+    'Sat' => 6,
+    'Sun' => 7,
+  );
+  $item = array();
+  $year = $variables['year'];
+  $result = $variables['result'];
+  if ($result) {
+    $report_date = $year . '-' . $result->field_report_month_value . '-' . $result->field_report_day_value;
+    $item['month'] = t($months[$result->field_report_month_value]['full']);
+    $item['date'] = $result->field_report_day_value;
+    $item['day'] = date('D', strtotime($report_date));
+    $item['day_of_week'] = $day_of_week[$item['day']];
+    $item['link_title'] = t($months[$result->field_report_month_value]['short'] . ' ' . $result->field_report_day_value);
+    $item['link_ref'] = lb_reports_create_report_link_ref($result->nid);
+  }
+  return $item;
+}
+
+/**
+ * Theme function for daily report table
+ */
+function theme_daily_report_table($variables) {
+  $table = '<table>';
+  $table .= '<thead>';
+  $table .= '<td>' . t('Month') . '</td>';
+  $table .= '<td>' . t('Mon') . '</td>';
+  $table .= '<td>' . t('Tue') . '</td>';
+  $table .= '<td>' . t('Wed') . '</td>';
+  $table .= '<td>' . t('Thu') . '</td>';
+  $table .= '</thead>';
+  $table .= '<tbody>';
+  $in_progress = FALSE;
+  $new_row = TRUE;
+  $label_row = TRUE;
+  $items = $variables['items'];
+  $current_column = 1;
+  $last_label = '';
+  foreach ($items as $item) {
+    if ($item['day_of_week'] < 5) {
+      if ($item['month'] != $last_label) {
+        $last_label = $item['month'];
+        $new_row = TRUE;
+        $label_row = TRUE;
+        if ($in_progress) {
+          while ($current_column < 5) {
+            $table .= '<td></td>';
+            $current_column += 1;
+          }
+        }
+        $current_column = 1;
+      }
+      else {
+        $label_row = FALSE;
+      }
+      if ($current_column > $item['day_of_week']) {
+        while ($current_column < 5) {
+          $table .= '<td></td>';
+          $current_column += 1;
+        }
+        $new_row = TRUE;
+        $current_column = 1;
+      }
+      if ($current_column > 4) {
+        $new_row = TRUE;
+        $current_column = 1;
+      }
+      if ($new_row) {
+        if ($in_progress) {
+          $table .= '</tr>';
+        }
+        if ($label_row) {
+          $table .= '<tr class="new-label">';
+          $table .= '<td>' . $item['month'] . '</td>';
+          $table .= '</tr>';
+        }
+        $table .= '<tr>';
+        $in_progress = TRUE;
+        $new_row = FALSE;
+        $table .= '<td></td>';
+      }
+      while ($current_column < $item['day_of_week']) {
+        $current_column += 1;
+        $table .= '<td></td>';
+      }
+      if ($item['link_ref']) {
+        $table .= '<td>' . l($item['link_title'], $item['link_ref'], array('attributes' => array('target' => '_blank'))) . '</td>';
+      }
+      else {
+        $table .= '<td>' . $item['link_title'] . '</td>';
+      }
+      $current_column += 1;
+    }
+    else {
+      $new_row = TRUE;
+      $current_column = 1;
+    }
+  }
+  if ($in_progress) {
+    while ($current_column < 5) {
+      $table .= '<td></td>';
+      $current_column += 1;
+    }
+    $table .= '</tr>';
+  }
+  $table .= '</tbody>';
+  $table .= '</table>';
+  return $table;
+}
+
+/**
+ * Theme function for weekly reports
+ */
+function theme_weekly_reports($variables) {
+  $months = array(
+    '1' => array('full' => 'January', 'short' => 'Jan'),
+    '2' => array('full' => 'February', 'short' => 'Feb'),
+    '3' => array('full' => 'March', 'short' => 'Mar'),
+    '4' => array('full' => 'April', 'short' => 'Apr'),
+    '5' => array('full' => 'May', 'short' => 'May'),
+    '6' => array('full' => 'June', 'short' => 'Jun'),
+    '7' => array('full' => 'July', 'short' => 'Jul'),
+    '8' => array('full' => 'August', 'short' => 'Aug'),
+    '9' => array('full' => 'September', 'short' => 'Sep'),
+    '10' => array('full' => 'October', 'short' => 'Oct'),
+    '11' => array('full' => 'November', 'short' => 'Nov'),
+    '12' => array('full' => 'December', 'short' => 'Dec'),
+  );
+  $item = array();
+  $year = $variables['year'];
+  $result = $variables['result'];
+  if ($result) {
+    $item['month'] = t($months[$result->field_report_month_value]['full']);
+    $item['date'] = $result->field_report_day_value;
+    $item['link_title'] = t($months[$result->field_report_month_value]['short'] . ' ' . $result->field_report_day_value);
+    $item['link_ref'] = lb_reports_create_report_link_ref($result->nid);
+    $item['text'] = $result->body_value;
+  }
+  return $item;
+}
+
+/**
+ * Theme function for weekly report list
+ */
+function theme_weekly_report_list($variables) {
+  $list = '<ul>';
+  $items = $variables['items'];
+  foreach ($items as $item) {
+    $list .= '<li>';
+      $list .= '<span class="link-title">';
+      if ($item['link_ref']) {
+        $list .= l($item['link_title'], $item['link_ref'], array('attributes' => array('target' => '_blank')));
+      }
+      else {
+        $list .= $item['link_title'];
+      }
+      $list .= '</span>';
+      if (trim($item['text']) != '') {
+        $list .= '<span class="item-text">';
+        $list .= check_plain(trim($item['text']));
+        $list .= '</span>';
+      }
+    $list .= '</li>';
+  }
+  $list .= '</ul>';
+  return $list;
+}
+
+/**
+ * Create the link reference to a node's report file
+ *
+ * @param string $nid
+ *   The NID for the node
+ * @return string $link_ref
+ *   The formatted reference to the file, or NULL
+ *   if there is no file uploaded.
+ */
+function lb_reports_create_report_link_ref($nid) {
+  $link_ref = NULL;
+  $query = 'SELECT uri
+            FROM {field_data_field_report}
+            LEFT JOIN {file_managed}
+              ON fid = field_report_fid
+            WHERE entity_id = :nid';
+  $query_args = array(':nid' => $nid);
+  $result = db_query($query, $query_args)->fetchField();
+  if ($result) {
+    $link_ref = file_create_url($result);
+  }
+  return $link_ref;
+}

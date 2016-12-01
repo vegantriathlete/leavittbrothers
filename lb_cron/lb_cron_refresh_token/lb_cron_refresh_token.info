@@ -1,0 +1,7 @@
+name = Leavitt Brothers Refresh Tokens
+description = Functionality to retrieve another token before the last one expires
+package = Leavitt Brothers
+core = 7.x
+
+dependencies[] = rules
+dependencies[] = lb_subscription

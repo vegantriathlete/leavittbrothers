@@ -1,0 +1,7 @@
+name = Leavitt Brothers Renew Subscriptions
+description = Functionality to handle automatically renewing subscriptions
+package = Leavitt Brothers
+core = 7.x
+
+dependencies[] = rules
+dependencies[] = lb_subscription

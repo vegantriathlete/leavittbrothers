@@ -1,0 +1,53 @@
+<?php
+
+/**
+ * @file
+ * Leavitt Brothers
+ *
+ * Global utilities and tweaks
+ */
+
+/**
+ * Implements hook_form_alter().
+ */
+function lvbros_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'user_login' || $form_id == 'user_login_form' || $form_id == 'user_login_block') {
+    $form['name']['#title'] = t('E-mail');
+    if (isset($form['name']['#description'])) {
+      $form['name']['#description'] = t('Enter your e-mail address.');
+    }
+    if ($form_id == 'user_login_block') {
+      $form['links']['#markup'] = '<div class="item-list"><ul><li class="first last"><a href="/user/password/" title="Request new password via e-mail.">' . t('Forgot password?') . '</a></li></ul></div>';
+    }
+  }
+}
+
+/**
+ * Implements hook_mail_alter().
+ */
+function lvbros_mail_alter(&$message) {
+  if ($message['id'] == 'user_register_no_approval_required' ||
+      $message['id'] == 'user_password_reset') {
+    $message['from'] = 'Leavitt Brothers <memberservices@leavittbrothers.com>';
+    $message['headers']['From'] = 'Leavitt Brothers <memberservices@leavittbrothers.com>';
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function lvbros_form_user_profile_form_alter(&$form, &$form_state, $form_id) {
+  // I'm just going to clobber this regardless of who the user is
+  if ($GLOBALS['user']->uid != 1) {
+    $form['contact']['#access'] = FALSE;
+  }
+
+  // Add a bit of help text so that users aren't so thrown off by the account
+  // fields
+  $help_text_weight = (int) $form['field_subscription']['#weight'];
+  $form['help_text'] = array(
+    '#markup' => t('The following fields are account-type settings. You will generally not be changing these much and can feel free to ignore them.'),
+    '#weight' => $help_text_weight,
+  );
+  $form['account']['#weight'] = 99;
+}

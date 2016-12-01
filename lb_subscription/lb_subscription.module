@@ -1,0 +1,858 @@
+<?php
+
+/**
+ * @file
+ * Leavitt Brothers Subscription
+ *
+ * Functionality to handle subscriptions
+ */
+
+define("API_USER", variable_get('lvb_ppf_user'));
+define("API_PWD", variable_get('lvb_ppf_pwd'));
+define("API_VENDOR", variable_get('lvb_ppf_vendor'));
+define("API_PARTNER", variable_get('lvb_ppf_partner'));
+define("API_ENDPOINT", variable_get('lvb_ppf_endpoint'));
+
+/**
+ * Implements hook_menu().
+ */
+function lb_subscription_menu() {
+  $items = array(
+    'subscribe' => array(
+      'title' => 'Subscribe',
+      'description' => 'Subscribe to Leavitt Brothers services',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('lb_subscription_build_subscription_form'),
+      'access callback' => 'lb_subscription_access', 
+      'type' => MENU_CALLBACK,
+    ),
+  );
+  return $items;
+}
+
+/**
+ * Access callback
+ */
+function lb_subscription_access() {
+  if ($GLOBALS['user']->uid) {
+    return TRUE;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * Form builder for LB Subscriptions
+ */
+function lb_subscription_build_subscription_form($form, &$form_state) {
+  lb_subscription_reset_form_state($form_state);
+  $form = array();
+  $services = lb_subscription_get_available_services();
+  $nids = array();
+  $form['container'] = array(
+    '#type' => 'container',
+    '#attributes' => array(
+      'id' => 'form-wrapper',
+    ),
+  );
+  $form['container']['heads_up'] = array(
+    '#type' => 'item',
+    '#markup' => '<div class="heads_up">' . t('Note: You will be charged for this transaction. If you are just looking to update your subscription options, then proceed to your user account page.') . '</div>',
+  );
+  $form['container']['heading'] = array(
+    '#type' => 'item',
+    '#markup' => lb_subscription_create_subscription_header($form, $form_state, $services),
+  );
+  $form['container']['payment_type'] = array(
+    '#type' => 'radios',
+    '#title' => t('Payment option'),
+    '#options' => array(
+      'check' => t('Check'),
+      'creditCard' => t('Credit Card'),
+    ),
+    '#default_value' => isset($form_state['values']['payment_type']) ? $form_state['values']['payment_type'] : 'creditCard',
+    '#ajax' => array(
+      'callback' => 'lb_subscription_ajax_callback',
+      'wrapper' => 'form-wrapper',
+    ),
+  );
+  $payment_is_check = lb_subscription_get_payment_type($form_state);
+  $form['container']['notice'] = array(
+    '#type' => 'item',
+    '#markup' => t('You must choose Annual when paying by check'),
+    '#access' => $payment_is_check,
+  );
+  $form['container']['service_options'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div class="service-options">',
+  );
+  foreach ($services as $nid => $service) {
+    $nids[] = $nid;
+    $form['container']['service_nids'] = array(
+      '#type' => 'value',
+      '#value' => $nids,
+    );
+    $form['container']['service_name_' . $nid] = array(
+      '#type' => 'item',
+      '#markup' => check_plain($service['title']),
+      '#prefix' => '<div class="service-option">',
+    );
+    $options = lb_subscription_get_service_options($form_state, $service);
+    $form['container']['service_options_' . $nid] = array(
+      '#type' => 'select',
+      '#options' => $options,
+      '#default_value' => isset($form_state['values']['service_options_' . $nid]) ? $form_state['values']['service_options_' . $nid] : 0,
+      '#ajax' => array(
+        'callback' => 'lb_subscription_ajax_callback',
+        'wrapper' => 'form-wrapper',
+      ),
+      '#suffix' => '</div>',
+    );
+  }
+  $form['container']['service_options_close'] = array(
+    '#type' => 'markup',
+    '#markup' => '</div>',
+  );
+  $charge_amount = lb_subscription_calculate_charge_amount($form_state) . '.00';
+  $form['container']['charge_amount'] = array(
+    '#type' => 'item',
+    '#title' => $payment_is_check ? t('Write a check for:') : t('Amount to be charged'),
+    '#markup' => $charge_amount,
+  );
+  $form['container']['ACCT'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Credit Card Number'),
+    '#description' => t('Enter sixteen digits without spaces or dashes.'),
+    '#access' => !$payment_is_check,
+  );
+  $form['container']['EXPDATE'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Expiration Date'),
+    '#description' => t('Enter four digits in the format MMYY'),
+    '#access' => !$payment_is_check,
+  );
+  $form['container']['CVV2'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Security Code'),
+    '#description' => t('Enter the three or four digit code [that is typically found next to your signature box].'),
+    '#access' => !$payment_is_check,
+  );
+  $form['container']['policy'] = array(
+    '#type' => 'item',
+    '#markup' => t('There are no free trials and no refunds. If you aren’t sure you want to subscribe, we’ll be happy to send you a couple free reports so you can see examples of our work.'),
+  );
+  $form['AMT'] = array(
+    '#type' => 'value',
+    '#value' => $charge_amount,
+  );
+  if (isset($form_state['values']['payment_type'])) {
+    $form['last_payment_type'] = array(
+      '#type' => 'value',
+      '#value' => $form_state['values']['payment_type'],
+    );
+  }
+  else {
+    $form['last_payment_type'] = array(
+      '#type' => 'value',
+      '#value' => 'creditCard',
+    );
+  }
+  $form['actions'] = array(
+    '#type' => 'actions',
+  );
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit'),
+  );
+  return $form;
+}
+
+/**
+ * Form submit handler
+ *
+ * @see lb_subscription_build_subscription_form
+ */
+function lb_subscription_build_subscription_form_submit($form, &$form_state) {
+  $account = user_load($GLOBALS['user']->uid);
+  if ($form_state['values']['payment_type'] == 'creditCard') {
+    $credit_card_number = $form_state['values']['ACCT'];
+    $expiration_date = $form_state['values']['EXPDATE'];
+    $cvv2 = $form_state['values']['CVV2'];
+    $amount = $form_state['values']['AMT'];
+    $response = lb_subscription_execute_authorization_transaction($account, $credit_card_number, $expiration_date, $cvv2, '0.00');
+    if ((isset($response['CVV2MATCH']) && $response['CVV2MATCH'] != 'Y') || $response['RESULT'] != '0') {
+      if ($response['RESULT'] != '0') {
+        drupal_set_message(check_plain($response['RESPMSG']), 'error');
+      }
+      else {
+        drupal_set_message(t('The security code did not match.'), 'error');
+      }
+      $form_state['rebuild'] = TRUE;
+    }
+    else {
+      $response = lb_subscription_execute_sale_transaction($account, $credit_card_number, $expiration_date, $cvv2, $amount);
+      if ($response['RESULT'] != '0') {
+        drupal_set_message(t('There was an error processing your information.'), 'error');
+        drupal_set_message(check_plain($response['RESPMSG']), 'error');
+        $form_state['rebuild'] = TRUE;
+      }
+      else {
+        $account_wrapper = entity_metadata_wrapper('user', $account);
+        $account_wrapper->field_last_pnref->set($response['PNREF']);
+        $account_wrapper->field_token_refreshed->set(time());
+        $account_wrapper->save();
+        lb_subscription_add_account_subscriptions($account, $form_state);
+      }
+    }
+  }
+  else {
+    lb_subscription_add_account_subscriptions($account, $form_state);
+  }
+}
+
+/**
+ * Create the header information for the subscription form
+ *
+ * @param array $form
+ *   The form array
+ * @param array $form_state
+ *   The form state array
+ * @return string $markup
+ *   The fully marked up information
+ */
+function lb_subscription_create_subscription_header($form, $form_state, $services){
+  // We go up to eleven!
+  $number_map = array(
+    'zero',
+    'one',
+    'two',
+    'three',
+    'four',
+    'five',
+    'six',
+    'seven',
+    'eight',
+    'nine',
+    'ten',
+    'eleven',
+  );
+  $markup = '';
+  $service_count = count($services);
+  $markup .= '<div class="service-count">';
+  if ($service_count == 1) {
+    $markup .= '<p>' . t('Leavitt Brothers offers @count report.', array('@count' => $number_map[$service_count])) . '</p>';
+  }
+  elseif ($service_count < 11) {
+    $markup .= '<p>' . t('Leavitt Brothers offers @count separate reports.', array('@count' => $number_map[$service_count])) . '</p>';
+  }
+  else {
+    $markup .= '<p>' . t('Leavitt Brothers offers a tremendous number of reports.') . '</p>';
+  }
+  $markup .= '</div>';
+  $markup .= '<div class="service-descriptions">';
+  $index = 1;
+  foreach ($services as $nid => $service) {
+    $markup .= '<div class="service-description ' . $index . '">';
+    $markup .= '<p class="service-title">' . check_plain($service['title']) . '</p>';
+    if (trim($service['pub_frequency']) > '') {
+      $markup .= '<p class="service-field service-pub_frequency">' . check_plain($service['pub_frequency']) . '</p>';
+    }
+    if (trim($service['short_description']) > '') {
+      $markup .= '<div class="service-short_description">' . check_markup($service['short_description'], 'filtered_html') . '</div>';
+    }
+    $markup .= '<p class="service-field example-reports">' . t('Access example reports <a href="!example_1" target="_blank">here</a> and <a href="!example_2" target="_blank">here</a>.', array('!example_1' => $service['example_1'], '!example_2' => $service['example_2'])) . '</p>';
+    $markup .= '<p class="service-cost">' . t('$@monthly/month or <br>$@annual/year', array('@monthly' => $service['monthly'], '@annual' => $service['annual'])) . '</p>';
+    $markup .= '</div>';
+    $index++;
+  }
+  $markup .= '</div>';
+  return $markup;
+}
+
+/**
+ * Reset some $form_state elements when switching back to 'check'
+ */
+function lb_subscription_reset_form_state(&$form_state) {
+  if (isset($form_state['values']['last_payment_type']) && $form_state['values']['last_payment_type'] != $form_state['values']['payment_type']) {
+    foreach ($form_state['values']['service_nids'] as $nid) {
+      $form_state['values']['service_options_' . $nid] = 0;
+    }
+  }
+}
+
+/**
+ * Get payment type
+ */
+function lb_subscription_get_payment_type($form_state) {
+  if (isset($form_state['values']['payment_type']) && $form_state['values']['payment_type'] == 'check') {
+    $payment_is_check = TRUE;
+  }
+  else {
+    $payment_is_check = FALSE;
+  }
+  return $payment_is_check;
+}
+
+/**
+ * Get service billing period options
+ */
+function lb_subscription_get_service_options($form_state, $service) {
+  $options[0] = t('-None-');
+  if (isset($form_state['values']['payment_type']) && $form_state['values']['payment_type'] == 'check') {
+    $options['check_' . $service['annual']] = t('Annual: $') . $service['annual'];
+  }
+  else {
+    $options['cc_' . $service['monthly']] = t('Monthly: $') . $service['monthly'];
+    $options['cc_' . $service['annual']] = t('Annual: $') . $service['annual'];
+  }
+  return $options;
+}
+
+/**
+ * Get the available services
+ *
+ * @return array $services
+ *   An associative array keyed by the service NID
+ */
+function lb_subscription_get_available_services() {
+  $services = array();
+  $query = 'SELECT n.nid
+            FROM {node} n
+            LEFT JOIN {field_data_field_sort_order} so
+              ON so.entity_id = n.nid
+            WHERE n.type = :subscription
+              AND n.status = :published
+              AND so.bundle = :subscription
+            ORDER BY so.field_sort_order_value';
+  $query_args = array(
+    ':subscription' => 'subscription',
+    ':published' => 1,
+  );
+  $results = db_query($query, $query_args);
+  foreach ($results as $result) {
+    $service = node_load($result->nid);
+    $services[$service->nid] = array(
+      'title' => $service->title,
+      'description' => isset($service->body[LANGUAGE_NONE][0]['value']) ? $service->body[LANGUAGE_NONE][0]['value'] : '',
+      'short_description' => isset($service->field_short_description[LANGUAGE_NONE][0]['value']) ? $service->field_short_description[LANGUAGE_NONE][0]['value'] : '',
+      'pub_frequency' => isset($service->field_publication_frequency[LANGUAGE_NONE][0]['value']) ? $service->field_publication_frequency[LANGUAGE_NONE][0]['value'] : '',
+      'example_1' => isset($service->field_example_report[LANGUAGE_NONE][0]['uri']) ? file_create_url($service->field_example_report[LANGUAGE_NONE][0]['uri']) : '#',
+      'example_2' => isset($service->field_example_report[LANGUAGE_NONE][1]['uri']) ? file_create_url($service->field_example_report[LANGUAGE_NONE][1]['uri']) : '#',
+      'monthly' => $service->field_monthly_price[LANGUAGE_NONE][0]['value'],
+      'annual' => $service->field_annual_price[LANGUAGE_NONE][0]['value'],
+    );
+  }
+  return $services;
+}
+
+/**
+ * Ajax callback for select options
+ */
+function lb_subscription_ajax_callback($form, $form_state) {
+  return $form['container'];
+}
+
+/**
+ * Calculate the amount to be charged based on selections
+ *
+ * @param array $form_state
+ *   The values of the form
+ * @return integer $charge_amount
+ *   The total amount to charge based on selections
+ */
+function lb_subscription_calculate_charge_amount($form_state) {
+  $charge_amount = 0;
+  if (isset($form_state['values']['service_nids'])) {
+    if ($form_state['values']['payment_type'] == 'check') {
+      $prefix = 'check_';
+    }
+    else {
+      $prefix = 'cc_';
+    }
+    foreach ($form_state['values']['service_nids'] as $nid) {
+      $charge_amount += str_replace($prefix, '', $form_state['values']['service_options_' . $nid]);
+    }
+  }
+  return $charge_amount;
+}
+
+/**
+ * Complete an authorization transaction from the website
+ *
+ * @param object $account
+ *   The fully loaded user account to be charged
+ * @param string $credit_card_number
+ *   The credit card number (This is NEVER saved to the database. It's only passed
+ *   through the form.)
+ * @param string $expiration_date
+ *   The credit card expiration date (This is NEVER saved to the database. It's only passed
+ *   through the form.)
+ * @param string $cvv2
+ *   The credit card security code (This is NEVER saved to the database. It's only passed
+ *   through the form.)
+ * @param string $amount
+ *   The dollar amount to be charged in the format [0-9][0-9]*.[0-9][0-9]
+ * @return array $response
+ *   The response from the PayPal server
+ */
+function lb_subscription_execute_authorization_transaction($account, $credit_card_number, $expiration_date, $cvv2, $amount) {
+  $nvp = 'TENDER=C';
+  $nvp .= '&TRXTYPE=A';
+  $nvp .= '&ACCT=' . $credit_card_number;
+  $nvp .= '&EXPDATE=' . $expiration_date;
+  $nvp .= '&CVV2=' . $cvv2;
+  $nvp .= '&AMT=' . $amount;
+  $response = lb_subscription_execute_api_call($nvp);
+  return $response;
+}
+
+/**
+ * Complete a sale transaction from the website
+ *
+ * @param object $account
+ *   The fully loaded user account to be charged
+ * @param string $credit_card_number
+ *   The credit card number (This is NEVER saved to the database. It's only passed
+ *   through the form.)
+ * @param string $expiration_date
+ *   The credit card expiration date (This is NEVER saved to the database. It's only passed
+ *   through the form.)
+ * @param string $cvv2
+ *   The credit card security code (This is NEVER saved to the database. It's only passed
+ *   through the form.)
+ * @param string $amount
+ *   The dollar amount to be charged in the format [0-9][0-9]*.[0-9][0-9]
+ * @return array $response
+ *   The response from the PayPal server
+ */
+function lb_subscription_execute_sale_transaction($account, $credit_card_number, $expiration_date, $cvv2, $amount) {
+  $nvp = 'TENDER=C';
+  $nvp .= '&TRXTYPE=S';
+  $nvp .= '&ACCT=' . $credit_card_number;
+  $nvp .= '&EXPDATE=' . $expiration_date;
+  $nvp .= '&CVV2=' . $cvv2;
+  $nvp .= '&AMT=' . $amount;
+  $response = lb_subscription_execute_api_call($nvp);
+  return $response;
+}
+
+/**
+ * Add subscriptions to an account
+ *
+ * @param object $account
+ *   The user for whom the subscription record should be created
+ * @param array $form_state
+ *   The form submission data
+ */
+function lb_subscription_add_account_subscriptions($account, $form_state) {
+  $payment_type = $form_state['values']['payment_type'];
+  $prefix = $payment_type == 'check' ? 'check_' : 'cc_';
+  foreach ($form_state['values']['service_nids'] as $nid) {
+    if ($form_state['values']['service_options_' . $nid] != '0') {
+      $service = node_load($nid);
+      $bill_amount = str_replace($prefix, '', $form_state['values']['service_options_' . $nid]);
+      $billing_period = $bill_amount == $service->field_monthly_price[LANGUAGE_NONE][0]['value'] ? 'monthly' : 'annual';
+      $account_subscription_data = lb_subscription_retrieve_account_subscription_data($account, $service);
+      if ($account_subscription_data['renewal_date']) {
+        $renewal_date = lb_subscription_calculate_renewal_date(strtotime($account_subscription_data['renewal_date']), $billing_period);
+      }
+      else {
+        $renewal_date = lb_subscription_calculate_renewal_date(time(), $billing_period);
+      }
+      $renewal_date_formatted = date("F j, Y", strtotime($renewal_date));
+      rules_invoke_event('lb_subscription_purchase', $account, $service, $payment_type, $billing_period, $renewal_date, $renewal_date_formatted);
+    }
+  }
+}
+
+/**
+ * Calculate a renewal date
+ *
+ * @param timestamp $base_date
+ *   The base date using Unix timestamp
+ * @param string $billing_period
+ *   The billing period (monthly, annual)
+ * @return string $renewal_date
+ *   The renewal date (YYYYMMDD)
+ */
+function lb_subscription_calculate_renewal_date($base_date, $billing_period) {
+  switch ($billing_period) {
+    case 'monthly':
+      $offset = 30 * 24 * 60 * 60;
+      break;
+    case 'annual':
+      $offset = 365 * 24 * 60 * 60;
+      break;
+    default:
+      $offset = 0;
+  }
+  $new_date = $base_date + $offset;
+  $renewal_date = date('Ymd', $new_date);
+  return $renewal_date;
+}
+
+/**
+ * Charge a customer's account with a reference transaction
+ *
+ * @param object $account
+ *   The fully loaded user account to be charged
+ * @param string $amount
+ *   The dollar amount to be charged in the format [0-9][0-9]*.[0-9][0-9]
+ */
+function lb_subscription_execute_reference_transaction($account, $amount) {
+  $nvp = 'TENDER=C';
+  $nvp .= '&TRXTYPE=S';
+  $nvp .= '&ORIGID=' . $account->field_last_pnref[LANGUAGE_NONE][0]['value'];
+  $nvp .= '&AMT=' . $amount;
+  $response = lb_subscription_execute_api_call($nvp);
+  return $response;
+}
+
+/**
+ * Connect with the PayPal server
+ *
+ * @param string $nvp
+ *   The name-value pairs
+ * @return array $response
+ *   The response from the PayPal server
+ */
+function lb_subscription_execute_api_call($nvp) {
+
+  // Prepare the name-value pair string
+  $nvp_request = 'USER=' . API_USER;
+  $nvp_request .= '&VENDOR=' . API_VENDOR;
+  $nvp_request .= '&PWD=' . API_PWD;
+  $nvp_request .= '&PARTNER=' . API_PARTNER;
+  $nvp_request .= '&' . $nvp;
+
+  // Setup the cURL request.
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, API_ENDPOINT);
+  curl_setopt($ch, CURLOPT_VERBOSE, 0);
+  curl_setopt($ch, CURLOPT_POST, 1);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, $nvp_request);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+  curl_setopt($ch, CURLOPT_NOPROGRESS, 1);
+  curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 0);
+  $result = curl_exec($ch);
+  
+  // Log any errors to the watchdog.
+  if ($error = curl_error($ch)) {
+    // Do NOT log the $nvp or $nvp_request string, as they may contain
+    // the credit card information!
+    watchdog('lb_subscription', 'cURL error at !url: @error', array('!url' => API_ENDPOINT, '@error' => $error), WATCHDOG_ERROR);
+    return FALSE;
+  }
+  curl_close($ch);
+
+  // Make the response an array and trim off the encapsulating characters.
+  $response = explode('&', $result);
+  
+  $return = array();
+  for ($i = 0; $i < count($response); $i++) {
+    $kv = explode('=', $response[$i]);
+    $return[$kv[0]] = $kv[1];
+  }
+
+  return $return;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function lb_subscription_form_user_profile_form_alter(&$form, &$form_state, $form_id) {
+  if (!user_access('administer users')) {
+    $form['field_subscription'][LANGUAGE_NONE]['add_more']['#access'] = FALSE;
+    $form['field_last_pnref']['#access'] = FALSE;
+    $form['field_token_refreshed']['#access'] = FALSE;
+    foreach($form['field_subscription'][LANGUAGE_NONE] as $key => $instance) {
+      if (is_int($key)) {
+        lb_subscription_protect_element($form['field_subscription'][LANGUAGE_NONE][$key]['field_subscription_reference'][LANGUAGE_NONE]);
+        lb_subscription_protect_element($form['field_subscription'][LANGUAGE_NONE][$key]['field_payment_type'][LANGUAGE_NONE]);
+        if (isset($form['field_subscription'][LANGUAGE_NONE][$key]['field_payment_type'][LANGUAGE_NONE]['#default_value'][0])  && $form['field_subscription'][LANGUAGE_NONE][$key]['field_payment_type'][LANGUAGE_NONE]['#default_value'][0] == 'creditCard') {
+          lb_subscription_protect_element($form['field_subscription'][LANGUAGE_NONE][$key]['field_billing_period'][LANGUAGE_NONE]);
+        }
+        else {
+          $form['field_subscription'][LANGUAGE_NONE][$key]['field_billing_period']['#access'] = FALSE;
+        }
+        if (isset($form['field_subscription'][LANGUAGE_NONE][$key]['field_payment_type'][LANGUAGE_NONE]['#default_value'][0])  && $form['field_subscription'][LANGUAGE_NONE][$key]['field_payment_type'][LANGUAGE_NONE]['#default_value'][0] == 'check') {
+          $form['field_subscription'][LANGUAGE_NONE][$key]['field_renew']['#access'] = FALSE;
+        }
+        lb_subscription_protect_element($form['field_subscription'][LANGUAGE_NONE][$key]['field_renewal_date'][LANGUAGE_NONE][0]['value']);
+        $form['field_subscription'][LANGUAGE_NONE][$key]['actions']['remove_button']['#access'] = FALSE;
+        if (!isset($form['field_subscription'][LANGUAGE_NONE][$key]['field_subscription_reference'][LANGUAGE_NONE]['#default_value'][0])) {
+          $form['field_subscription'][LANGUAGE_NONE][$key]['field_renew']['#access'] = FALSE;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Protect the element from being modifiable
+ *
+ * Surely there is a better way to handle this than I am using.
+ * This is truly an ugly hack.
+ *
+ * @param array $element
+ *   The form element to be protected
+ */
+function lb_subscription_protect_element(&$element) {
+  switch ($element['#type']) {
+    case 'select':
+      lb_subscription_protect_select_element($element);
+      break;
+    case 'radios':
+      lb_subscription_protect_radios_element($element);
+      break;
+    case 'textfield':
+      lb_subscription_protect_textfield_element($element);
+      break;
+  }
+}
+
+function lb_subscription_protect_select_element(&$element) {
+  if (isset($element['#default_value'][0])) {
+    $element['#title'] .= ': ' . $element['#options'][$element['#default_value'][0]];
+    $element['#theme'] = 'item';
+  }
+  else {
+    $element['#access'] = FALSE;
+  }
+}
+
+function lb_subscription_protect_radios_element(&$element) {
+  if (isset($element['#default_value'])) {
+    unset($element['#options']['_none']);
+  }
+  else {
+    $element['#access'] = FALSE;
+  }
+}
+
+function lb_subscription_protect_textfield_element(&$element) {
+  if (isset($element['#default_value'])) {
+    $element['#title'] .= ': ' . $element['#default_value'];
+    $element['#theme'] = 'item';
+  }
+  else {
+    $element['#access'] = FALSE;
+  }
+}
+
+/**
+ * Renew a subscription for an account
+ *
+ * @param object $account
+ *   The user account for which the subscription should be renewed
+ * @param object $subscription
+ *   The fully loaded node object of the subscription to renew
+ */
+function lb_subscription_renew_subscription($account, $subscription) {
+  $amount = lb_subscription_calculate_account_subscription_renewal_amount($account, $subscription);
+  $response = lb_subscription_execute_reference_transaction($account, $amount);
+  if ($response['RESULT'] != '0') {
+    watchdog('lb_subscription', t('There was an error processing the transaction for account: @account in the amount of @amount. The error message was: @error.', array('@account' => $account->name, '@amount' => $amount, '@error' => $response['RESPMSG'])));
+    rules_invoke_event('lb_subscription_renewal_failure', $account, $subscription);
+  }
+  else {
+    // Update the last transaction number
+    $account_wrapper = entity_metadata_wrapper('user', $account);
+    $account_wrapper->field_last_pnref->set($response['PNREF']);
+    $account_wrapper->field_token_refreshed->set(time());
+    $account_wrapper->save();
+
+    // Process the renewal
+    $billing_period = lb_subscription_retrieve_account_subscription_billing_period($account, $subscription);
+    if ($billing_period) {
+      $renewal_date = lb_subscription_calculate_account_subscription_renewal_date($account, $subscription, $billing_period);
+    }
+    else {
+      $renewal_date = NULL;
+    }
+    if ($billing_period && $renewal_date) {
+      $renewal_date_formatted = date("F j, Y", strtotime($renewal_date));
+      rules_invoke_event('lb_subscription_renewal_success', $account, $subscription, $billing_period, $renewal_date, $renewal_date_formatted);
+    }
+    else {
+      rules_invoke_event('lb_subscription_missing_renewal_information', $account, $subscription, $amount, $billing_period, $renewal_date);
+    }
+  }
+}
+
+/**
+ * Calculate the renewal amount for an account's subscription
+ *
+ * @param object $account
+ *   The user account for which the subscription should be renewed
+ * @param object $subscription
+ *   The fully loaded node object of the subscription to renew
+ * @return string $renewal_amount
+ *   The renewal amount for the account's subscription
+ */
+function lb_subscription_calculate_account_subscription_renewal_amount($account, $subscription) {
+  $account_subscription_data = lb_subscription_retrieve_account_subscription_data($account, $subscription);
+  $renewal_amount = $account_subscription_data['charge'];
+  return $renewal_amount;
+}
+
+/**
+ * Retrieve the billing period for an account's subscription
+ *
+ * @param object $account
+ *   The user account for which the subscription should be renewed
+ * @param object $subscription
+ *   The fully loaded node object of the subscription to renew
+ * @return string $billing_period
+ *   The billing period for the account's subscription monthly / annual
+ */
+function lb_subscription_retrieve_account_subscription_billing_period($account, $subscription) {
+  $account_subscription_data = lb_subscription_retrieve_account_subscription_data($account, $subscription);
+  $billing_period = $account_subscription_data['billing_period'];
+  return $billing_period;
+}
+
+/**
+ * Calculate the renewal date for an account's subscription
+ *
+ * @param object $account
+ *   The user account for which the subscription should be renewed
+ * @param object $subscription
+ *   The fully loaded node object of the subscription to renew
+ * @param string $billing_period
+ *   The billing period for the account's subscription
+ * @return string $renewal_date
+ *   The YYYYMMDD renewal date
+ */
+function lb_subscription_calculate_account_subscription_renewal_date($account, $subscription, $billing_period) {
+  $account_subscription_data = lb_subscription_retrieve_account_subscription_data($account, $subscription);
+  $renewal_date = $account_subscription_data['renewal_date'];
+  if ($renewal_date) {
+    $base_date = strtotime($renewal_date); 
+    $renewal_date = lb_subscription_calculate_renewal_date($base_date, $billing_period);
+  }
+  return $renewal_date;
+}
+
+/**
+ * Retrieve an account's data for a particular subscription
+ *
+ * @param object $account
+ *   The user account for which the subscription should be renewed
+ * @param object $subscription
+ *   The fully loaded node object of the subscription to renew
+ * @return array $account_subscription_data
+ */
+function lb_subscription_retrieve_account_subscription_data($account, $subscription) {
+  $account_subscription_data = array(
+    'delta' => NULL,
+    'subscription_target_id' => NULL,
+    'charge' => NULL,
+    'billing_period' => NULL,
+    'renew' => NULL,
+    'renewal_date' => NULL,
+    'payment_type' => NULL,
+    'subscriptions' => FALSE,
+  );
+  $field_subscription_items = field_get_items('user', $account, 'field_subscription');
+  if (!$field_subscription_items) {
+    return $account_subscription_data;
+  }
+  foreach ($field_subscription_items as $delta => $field_subscription_item) {
+    if (isset($field_subscription_item['field_subscription_reference'][LANGUAGE_NONE][0]['target_id']) && $field_subscription_item['field_subscription_reference'][LANGUAGE_NONE][0]['target_id'] == $subscription->nid) {
+      $account_subscription_data['subscriptions'] = TRUE;
+      $account_subscription_data['delta'] = $delta;
+      $account_subscription_data['subscription_target_id'] = $subscription->nid;
+      if (isset($field_subscription_item['field_billing_period'][LANGUAGE_NONE][0]['value'])) {
+        $account_subscription_data['billing_period'] = $field_subscription_item['field_billing_period'][LANGUAGE_NONE][0]['value'];
+        $account_subscription_data['charge'] = lb_subscription_retrieve_subscription_charge($subscription, $account_subscription_data['billing_period']);
+      }
+      if (isset($field_subscription_item['field_renew'][LANGUAGE_NONE][0]['value'])) {
+        $account_subscription_data['renew'] = $field_subscription_item['field_renew'][LANGUAGE_NONE][0]['value'];
+      }
+      if (isset($field_subscription_item['field_renewal_date'][LANGUAGE_NONE][0]['value'])) {
+        $account_subscription_data['renewal_date'] = $field_subscription_item['field_renewal_date'][LANGUAGE_NONE][0]['value'];
+      }
+      if (isset($field_subscription_item['field_payment_type'][LANGUAGE_NONE][0]['value'])) {
+        $account_subscription_data['payment_type'] = $field_subscription_item['field_payment_type'][LANGUAGE_NONE][0]['value'];
+      }
+      break;
+    }
+    elseif (isset($field_subscription_item['field_subscription_reference'][LANGUAGE_NONE][0]['target_id'])) {
+      $account_subscription_data['subscriptions'] = TRUE;
+    }
+  }
+  return $account_subscription_data;
+}
+
+/**
+ * Retrieve the charge for a subscription
+ *
+ * @param object $subscription
+ *   The fully loaded node object for the subscription
+ * @param string $billing_period
+ *   The billing period to be charged
+ * @return string $charge
+ *   The charge for the billing period. Example: 49.00
+ */
+function lb_subscription_retrieve_subscription_charge($subscription, $billing_period) {
+  $amount = '';
+  $field = 'field_' . $billing_period . '_price';
+  $field_data = $subscription->{$field};
+  if (isset($field_data[LANGUAGE_NONE][0]['value'])) {
+    $unformatted_amount = $field_data[LANGUAGE_NONE][0]['value'];
+    $amount = lb_subscription_format_dollar_amount($unformatted_amount);
+  }
+  return $amount;
+}
+
+/**
+ * Format a dollar amount to pass as a variable in a transaction
+ *
+ * @param integer $unformatted_amount
+ *   The amount to be formatted
+ * @return string $amount
+ *   The formatted amount
+ */
+function lb_subscription_format_dollar_amount($unformatted_amount) {
+  $amount = $unformatted_amount . '.00';
+  return $amount;
+}
+
+/**
+ * Refresh a token for an account
+ *
+ * @param int $uid
+ *   The user id for the account for which the subscription should be renewed
+ */
+function lb_subscription_refresh_token($uid) {
+  $account = user_load($uid);
+  $response = lb_subscription_execute_inquiry_transaction($account);
+  if ($response['RESULT'] != '0') {
+    watchdog('lb_subscription', t('There was an error refreshing the token for account: @account. The error message was: @error.', array('@account' => $account->name, '@error' => $response['RESPMSG'])));
+    rules_invoke_event('lb_subscription_refresh_failure', $account);
+  }
+  else {
+    // Update the last transaction number
+    $account_wrapper = entity_metadata_wrapper('user', $account);
+    $account_wrapper->field_last_pnref->set($response['PNREF']);
+    $account_wrapper->field_token_refreshed->set(time());
+    $account_wrapper->save();
+  }
+}
+
+/**
+ * Execute an inquiry transaction
+ *
+ * @param object $account
+ *   The fully loaded user account
+ */
+function lb_subscription_execute_inquiry_transaction($account) {
+  $nvp = 'TENDER=C';
+  $nvp .= '&TRXTYPE=I';
+  $nvp .= '&ORIGID=' . $account->field_last_pnref[LANGUAGE_NONE][0]['value'];
+  $response = lb_subscription_execute_api_call($nvp);
+  return $response;
+}
