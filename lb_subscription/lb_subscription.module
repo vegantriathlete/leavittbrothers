@@ -655,7 +655,7 @@ function lb_subscription_renew_subscription($account, $subscription) {
   $response = lb_subscription_execute_reference_transaction($account, $amount);
   if ($response['RESULT'] != '0') {
     watchdog('lb_subscription', t('There was an error processing the transaction for account: @account in the amount of @amount. The error message was: @error.', array('@account' => $account->name, '@amount' => $amount, '@error' => $response['RESPMSG'])));
-    rules_invoke_event('lb_subscription_renewal_failure', $account, $subscription);
+    rules_invoke_event('lb_subscription_renewal_failure', $account, $subscription, $amount, $response['RESPMSG']);
   }
   else {
     // Update the last transaction number

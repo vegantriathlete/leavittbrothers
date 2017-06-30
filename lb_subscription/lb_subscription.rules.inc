@@ -96,6 +96,14 @@ function lb_subscription_rules_event_info() {
           'bundle' => 'subscription',
           'label' => t('Subscription not renewed'),
         ),
+        'amount' => array(
+          'type' => 'text',
+          'label' => t('$ Amount being processed'),
+        ),
+        'error' => array(
+          'type' => 'text',
+          'label' => t('Error message from the PayPal server'),
+        ),
       ),
     ),
     'lb_subscription_refresh_failure' => array(
